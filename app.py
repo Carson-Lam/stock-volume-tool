@@ -88,6 +88,16 @@ with st.sidebar:
     else:
         outlier_sd = None
 
+    show_rising_line = st.checkbox(
+        "Show rising avg line",
+        value=False,
+    )
+
+    show_falling_line = st.checkbox(
+        "Show falling avg line",
+        value=False,
+    )
+
     fetch_clicked = st.button("Get data", type="primary", use_container_width=True)
 
 # ---------------------------------------------------------------------------
@@ -261,7 +271,7 @@ def render():
     )
     render_metric(
         c2,
-        "Avg volume: Rising",
+        "Average volume: Rising",
         f"{int(rising_avg):,}" if pd.notna(rising_avg) else "N/A",
         triangle="▲",
         color="#2ada5c",
@@ -270,7 +280,7 @@ def render():
     )
     render_metric(
         c3,
-        "Avg volume: Falling",
+        "Average volume: Falling",
         f"{int(falling_avg):,}" if pd.notna(falling_avg) else "N/A",
         triangle="▼",
         color="#d1242f",
@@ -279,7 +289,7 @@ def render():
     )
     render_metric(
         c4,
-        "Avg volume:", f"{avg_volume:,}"
+        "Average volume:", f"{avg_volume:,}"
     )
     
     x_labels = df[date_col].dt.strftime("%Y-%m-%d")
@@ -302,21 +312,21 @@ def render():
     fig.add_hline(y=avg_volume, line_dash="dash", line_color="#FFFFFF")
     fig.add_annotation(
         xref="paper", x=1.01, yref="y", y=avg_volume,
-        text="Overall avg", showarrow=False, xanchor="left",
+        text="Overall average", showarrow=False, xanchor="left",
         font=dict(color="#FFFFFF", size=11),
     )
-    if pd.notna(rising_avg):
+    if show_rising_line and pd.notna(rising_avg):
         fig.add_hline(y=rising_avg, line_dash="dash", line_color="#2ada5c")
         fig.add_annotation(
             xref="paper", x=1.01, yref="y", y=rising_avg,
-            text="Rising avg", showarrow=False, xanchor="left",
+            text="Rising average", showarrow=False, xanchor="left",
             font=dict(color="#229B44", size=11),
         )
-    if pd.notna(falling_avg):
+    if show_falling_line and pd.notna(falling_avg):
         fig.add_hline(y=falling_avg, line_dash="dash", line_color="#d1242f")
         fig.add_annotation(
             xref="paper", x=1.01, yref="y", y=falling_avg,
-            text="Falling avg", showarrow=False, xanchor="left",
+            text="Falling average", showarrow=False, xanchor="left",
             font=dict(color="#9C252D", size=11),
         )
 
