@@ -232,7 +232,7 @@ def render():
                         {rows_html}
                     </div>
                 </div>
-                
+
                 <style>
                 .vol-tooltip:hover .vol-tooltip-content {{ display:block !important; }}
                 </style>
@@ -284,15 +284,42 @@ def render():
     
     x_labels = df[date_col].dt.strftime("%Y-%m-%d")
 
+    bar_colors = [
+        "#229B44" if c > o else "#9C252D" if c < o else "#888888"
+        for c, o in zip(df["Close"], df["Open"])
+    ]
+
     fig = go.Figure()
     fig.add_trace(
         go.Bar(
             x=x_labels,
             y=df["Volume"],
-            marker_color="#4C82F7",
+            marker_color=bar_colors,
             name="Volume",
         )
     )
+
+    fig.add_hline(y=avg_volume, line_dash="dash", line_color="#FFFFFF")
+    fig.add_annotation(
+        xref="paper", x=1.01, yref="y", y=avg_volume,
+        text="Overall avg", showarrow=False, xanchor="left",
+        font=dict(color="#FFFFFF", size=11),
+    )
+    if pd.notna(rising_avg):
+        fig.add_hline(y=rising_avg, line_dash="dash", line_color="#2ada5c")
+        fig.add_annotation(
+            xref="paper", x=1.01, yref="y", y=rising_avg,
+            text="Rising avg", showarrow=False, xanchor="left",
+            font=dict(color="#229B44", size=11),
+        )
+    if pd.notna(falling_avg):
+        fig.add_hline(y=falling_avg, line_dash="dash", line_color="#d1242f")
+        fig.add_annotation(
+            xref="paper", x=1.01, yref="y", y=falling_avg,
+            text="Falling avg", showarrow=False, xanchor="left",
+            font=dict(color="#9C252D", size=11),
+        )
+
     fig.update_layout(
         title=f"{ticker_input} Trading Volume",
         xaxis_title="Date",
@@ -300,17 +327,19 @@ def render():
         xaxis_type="category",
         bargap=0.1,
         height=500,
-        margin=dict(l=10, r=10, t=50, b=10),
+        margin=dict(l=10, r=90, t=50, b=10),
     )
     fig.update_xaxes(nticks=15)
     st.plotly_chart(fig, use_container_width=True)
 
     with st.expander("Show raw data"):
         st.dataframe(
-            df[[date_col, "Volume", "Close"]].sort_values(date_col, ascending=False),
+            df[[date_col, "Open", "Close", "Volume"]]
+            .assign(Open=lambda d: d["Open"].round(4), Close=lambda d: d["Close"].round(4))
+            .sort_values(date_col, ascending=False),
             use_container_width=True,
         )
-        csv = df[[date_col, "Volume", "Close"]].to_csv(index=False).encode("utf-8")
+        csv = df[[date_col, "Open", "Close", "Volume"]].to_csv(index=False).encode("utf-8")
         st.download_button(
             "Download as CSV",
             data=csv,
