@@ -24,7 +24,7 @@ st.set_page_config(page_title="Stock Volume Tracker", layout="wide")
 st.title("Stock Volume Tracker")
 st.caption(
     "Enter a ticker and a time period to see how many shares were traded "
-    "over that time. Data from Yahoo Finance."
+    "over that time. Hover over the average volumes to see the top 2 highest-volume bars."
 )
 
 # ---------------------------------------------------------------------------
@@ -230,7 +230,7 @@ def render():
                 )
                 dropdown_html = f"""
                 <div class="vol-tooltip" style="position:relative;display:inline-block;cursor:help;">
-                    <span>{value_str}{triangle_html}</span>
+                    <span style="border-bottom:2px dotted #808495;">{value_str}</span>{triangle_html}
                     <div class="vol-tooltip-content" style="display:none;position:absolute;
                         top:100%;left:0;background:#262730;border:1px solid #444;
                         border-radius:8px;padding:10px 14px;font-size:0.85rem;
@@ -312,7 +312,7 @@ def render():
     fig.add_hline(y=avg_volume, line_dash="dash", line_color="#FFFFFF")
     fig.add_annotation(
         xref="paper", x=1.01, yref="y", y=avg_volume,
-        text="Overall average", showarrow=False, xanchor="left",
+        text=" ", showarrow=False, xanchor="left",
         font=dict(color="#FFFFFF", size=11),
     )
     if show_rising_line and pd.notna(rising_avg):
@@ -361,6 +361,9 @@ def render():
 render()
 
 st.divider()
+st.caption(
+    "Data from Yahoo Finance via `yfinance`"
+)
 st.caption(
     "By Carson Lam"
 )
