@@ -112,6 +112,21 @@ def fetch_history(ticker: str, period: str | None, start, end, interval: str) ->
         df = tk.history(start=start, end=end, interval=interval)
     return df
 
+@st.cache_data(ttl=30, show_spinner=False)
+def fetch_quote(ticker: str):
+    info = yf.Ticker(ticker).info
+    return {
+        "price": info.get("currentPrice") or info.get("regularMarketPrice"),
+        "change": info.get("regularMarketChange"),
+        "pct_change": info.get("regularMarketChangePercent"),
+        "market_state": info.get("marketState"),
+        "market_time": info.get("regularMarketTime"),
+        "currency": info.get("currency", "USD"),
+        "long_name": info.get("longName") or info.get("shortName"),
+        "exchange": info.get("fullExchangeName") or info.get("exchange"),
+    }
+
+
 def mean_excluding_outliers(volumes: pd.Series, sd_threshold: float | None):
     if volumes.empty:
         return float("nan"), 0
@@ -133,6 +148,16 @@ def mean_excluding_outliers(volumes: pd.Series, sd_threshold: float | None):
         return mean1, 0
 
     return filtered.mean(), int((~keep_mask).sum())
+
+def normalize_exchange(raw_exchange: str | None) -> str:
+    if not raw_exchange:
+        return ""
+    raw = raw_exchange.upper()
+    if "NASDAQ" in raw or raw in ("NMS", "NCM", "NGM"):
+        return "NASDAQ"
+    if "NYSE" in raw or raw == "NYQ":
+        return "NYSE"
+    return raw_exchange
 
 def render():
     if not ticker_input:
@@ -167,10 +192,33 @@ def render():
     date_col = "Date" if "Date" in df.columns else df.columns[0]
 
     avg_volume = int(df["Volume"].mean())
-
     latest_row = df.iloc[-1]
     latest_volume = int(latest_row["Volume"])
     latest_date = latest_row[date_col].date()
+
+    quote = fetch_quote(ticker_input)
+    if quote and quote["price"] is not None:
+        latest_price = quote["price"]
+        price_change = quote["change"]
+        pct_change = quote["pct_change"]
+        market_state = quote["market_state"]
+    else:
+        latest_price = latest_row["Close"]
+        prev_close = df.iloc[-2]["Close"] if len(df) >= 2 else latest_price
+        price_change = latest_price - prev_close
+        pct_change = (price_change / prev_close * 100) if prev_close else 0
+        market_state = "CLOSED"
+    state_label = {
+        "REGULAR": "Live",
+        "PRE": "Pre-market",
+        "POST": "After hours",
+        "CLOSED": "Closed",
+    }.get(market_state, "Closed")
+
+    company_name = quote.get("long_name") if quote else None
+    exchange_label = normalize_exchange(quote.get("exchange")) if quote else ""
+    exchange_ticker = f"{exchange_label}: {ticker_input}" if exchange_label else ticker_input
+    ticker_label = f"{company_name} ({exchange_ticker})" if company_name else exchange_ticker
 
     # Direction of each bar: rising = that bar's Close finished above its own
     # Open, falling = Close finished below its own Open. 
@@ -202,17 +250,17 @@ def render():
     else:
         latest_triangle, latest_color = None, None      
     
-    def top2(mask):
-        subset = df.loc[mask, [date_col, "Volume"]].sort_values("Volume", ascending=False).head(2)
+    def extreme2(mask, ascending):
+        subset = df.loc[mask, [date_col, "Volume"]].sort_values("Volume", ascending=ascending).head(2)
         return [
             (row[date_col].date().isoformat(), f"{int(row['Volume']):,}")
             for _, row in subset.iterrows()
         ]
 
-    rising_top2 = top2(rising_mask)
-    falling_top2 = top2(falling_mask)
+    rising_top2 = extreme2(rising_mask, ascending=False)
+    falling_top2 = extreme2(falling_mask, ascending=True)
 
-    def render_metric(col, label, value_str, triangle=None, color=None, tooltip=None, hover_rows=None):
+    def render_metric(col, label, value_str, triangle=None, color=None, tooltip=None, hover_rows=None, hover_title="Top 2 volumes"):
         with col:
             st.metric(label, value="\u00A0", help=tooltip) 
 
@@ -237,7 +285,7 @@ def render():
                         white-space:nowrap;z-index:999;margin-top:6px;
                         box-shadow:0 2px 8px rgba(0,0,0,0.4);">
                         <div style='color:#ddd;font-size:0.75rem;margin-bottom:4px;'>
-                            Top 2 volumes
+                            {hover_title}
                         </div>
                         {rows_html}
                     </div>
@@ -259,7 +307,34 @@ def render():
                 unsafe_allow_html=True,
             )
 
-    st.subheader(f"{ticker_input}: Volume Summary")
+    price_is_up = price_change >= 0
+    price_arrow = "▲" if price_is_up else "▼"
+    price_color = "#2ada5c" if price_is_up else "#d1242f"
+    badge_bg = "rgba(42,218,92,0.15)" if price_is_up else "rgba(209,36,47,0.15)"
+    change_sign = "+" if price_is_up else "-"
+    st.markdown(
+        f"""
+        <div style='margin-bottom:15px;'>
+            <div style='font-size:1.1rem;line-height:1.2;'>{ticker_label}</div>
+            <div style='display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;line-height:1.2;'>
+                <span style='font-size:2.75rem;font-weight:700;'>{latest_price:,.2f}</span>
+                <span style='color:#808495;font-size:1.1rem;'>{quote.get("currency", "USD") if quote else "USD"}</span>
+                <span style='background:{badge_bg};color:{price_color};padding:4px 12px;
+                    border-radius:0.5rem;font-weight:600;font-size:1rem;'>
+                    {price_arrow} {abs(pct_change):.2f}%
+                </span>
+                <span style='color:{price_color};font-size:1.1rem;'>
+                    {change_sign}{abs(price_change):.2f} today
+                </span>
+            </div>
+            <div style='color:#808495;font-size:14px;'>
+                {state_label}: {latest_date.strftime('%b %d, %Y')} &middot; Data via Yahoo Finance
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
     c1, c2, c3, c4 = st.columns(4)
     render_metric(
         c1,       
@@ -277,6 +352,7 @@ def render():
         color="#2ada5c",
         tooltip=rising_help,
         hover_rows=rising_top2,
+        hover_title="Top 2 volumes",
     )
     render_metric(
         c3,
@@ -286,6 +362,7 @@ def render():
         color="#d1242f",
         tooltip=falling_help,
         hover_rows=falling_top2,
+        hover_title="Lowest 2 volumes",
     )
     render_metric(
         c4,
@@ -309,21 +386,21 @@ def render():
         )
     )
 
-    fig.add_hline(y=avg_volume, line_dash="dash", line_color="#FFFFFF")
+    fig.add_hline(y=avg_volume, line_dash="dash", line_color="#FFFFFF", line_width=3)
     fig.add_annotation(
         xref="paper", x=1.01, yref="y", y=avg_volume,
         text=" ", showarrow=False, xanchor="left",
         font=dict(color="#FFFFFF", size=11),
     )
     if show_rising_line and pd.notna(rising_avg):
-        fig.add_hline(y=rising_avg, line_dash="dash", line_color="#2ada5c")
+        fig.add_hline(y=rising_avg, line_dash="dash", line_color="#2ada5c", line_width=3)
         fig.add_annotation(
             xref="paper", x=1.01, yref="y", y=rising_avg,
             text="Rising average", showarrow=False, xanchor="left",
             font=dict(color="#229B44", size=11),
         )
     if show_falling_line and pd.notna(falling_avg):
-        fig.add_hline(y=falling_avg, line_dash="dash", line_color="#d1242f")
+        fig.add_hline(y=falling_avg, line_dash="dash", line_color="#d1242f", line_width=3)
         fig.add_annotation(
             xref="paper", x=1.01, yref="y", y=falling_avg,
             text="Falling average", showarrow=False, xanchor="left",
