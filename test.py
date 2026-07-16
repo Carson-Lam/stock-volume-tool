@@ -191,7 +191,11 @@ def render():
         latest_triangle, latest_color = "▼", "#d1242f"   
     else:
         latest_triangle, latest_color = None, None      
-    
+
+    # Top 2 highest-volume days within each group (rising / falling), for the
+    # hover dropdown. Uses every rising/falling bar, regardless of the
+    # outlier setting above — this shows the actual highest volumes, not a
+    # filtered subset.
     def top2(mask):
         subset = df.loc[mask, [date_col, "Volume"]].sort_values("Volume", ascending=False).head(2)
         return [
@@ -232,7 +236,6 @@ def render():
                         {rows_html}
                     </div>
                 </div>
-                
                 <style>
                 .vol-tooltip:hover .vol-tooltip-content {{ display:block !important; }}
                 </style>
@@ -253,7 +256,7 @@ def render():
     c1, c2, c3, c4 = st.columns(4)
     render_metric(
         c1,       
-        "Today's volume",
+        "Most recent volume",
         f"{latest_volume:,}",
         triangle=latest_triangle,
         color=latest_color,
@@ -261,7 +264,11 @@ def render():
     )
     render_metric(
         c2,
-        "Avg volume: Rising",
+        "Average volume:", f"{avg_volume:,}"
+    )
+    render_metric(
+        c3,
+        "Avg volume — rising bars",
         f"{int(rising_avg):,}" if pd.notna(rising_avg) else "N/A",
         triangle="▲",
         color="#2ada5c",
@@ -269,19 +276,17 @@ def render():
         hover_rows=rising_top2,
     )
     render_metric(
-        c3,
-        "Avg volume: Falling",
+        c4,
+        "Avg volume — falling bars",
         f"{int(falling_avg):,}" if pd.notna(falling_avg) else "N/A",
         triangle="▼",
         color="#d1242f",
         tooltip=falling_help,
         hover_rows=falling_top2,
     )
-    render_metric(
-        c4,
-        "Avg volume:", f"{avg_volume:,}"
-    )
-    
+
+    # Category-type axis with real trading dates as string labels, so no
+    # empty space is reserved for weekends/holidays where nothing traded.
     x_labels = df[date_col].dt.strftime("%Y-%m-%d")
 
     fig = go.Figure()
@@ -298,7 +303,7 @@ def render():
         xaxis_title="Date",
         yaxis_title="Shares traded",
         xaxis_type="category",
-        bargap=0.1,
+        bargap=0,
         height=500,
         margin=dict(l=10, r=10, t=50, b=10),
     )
