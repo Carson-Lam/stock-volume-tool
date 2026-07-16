@@ -118,11 +118,11 @@ def render():
     latest_volume = int(latest_row["Volume"])
     latest_date = latest_row[date_col].date()
 
-    # Direction of each bar vs. the previous bar's close, so we can split
-    # volume into "rising" bars vs "falling" bars (flat/first bar excluded).
-    price_change = df["Close"].diff()
-    rising_mask = price_change > 0
-    falling_mask = price_change < 0
+    # Direction of each bar: rising = that bar's Close finished above its own
+    # Open, falling = Close finished below its own Open. 
+    # (RARE) Bars where Close == Open are excluded from both.
+    rising_mask = df["Close"] > df["Open"]
+    falling_mask = df["Close"] < df["Open"]
 
     rising_avg = df.loc[rising_mask, "Volume"].mean()
     falling_avg = df.loc[falling_mask, "Volume"].mean()
@@ -134,12 +134,12 @@ def render():
     c3.metric(
         "Avg volume: rising",
         f"{int(rising_avg):,}" if pd.notna(rising_avg) else "N/A",
-        help="Average volume on bars where price closed higher than the previous bar.",
+        help="Average volume on bars where price closed higher than their own open",
     )
     c4.metric(
         "Avg volume: falling",
         f"{int(falling_avg):,}" if pd.notna(falling_avg) else "N/A",
-        help="Average volume on bars where price closed lower than the previous bar.",
+        help="Average volume on bars where price closed below their own open",
     )
 
     fig = go.Figure()
