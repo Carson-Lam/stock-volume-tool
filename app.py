@@ -20,7 +20,7 @@ import streamlit as st
 import yfinance as yf
 from streamlit_autorefresh import st_autorefresh
 
-st_autorefresh(interval=60_000, key="minute_data_refresh") 
+st_autorefresh(interval=10_000, key="minute_data_refresh") 
 
 st.set_page_config(page_title="Stock Volume Tracker", layout="wide")
 
@@ -29,79 +29,6 @@ st.caption(
     "Enter a ticker and a time period to see how many shares were traded "
     "over that time. Hover over the average volumes to see the top 2 highest-volume bars."
 )
-
-# ---------------------------------------------------------------------------
-# Sidebar controls
-# ---------------------------------------------------------------------------
-with st.sidebar:
-    st.header("Settings")
-
-    ticker_input = st.text_input(
-        "Ticker symbol", value="AAPL", help="e.g. AAPL, MSFT, TSLA, NVDA"
-    ).strip().upper()
-
-    range_mode = st.radio(
-        "Time period",
-        ["Quick range", "Custom dates"],
-        horizontal=True,
-    )
-
-    if range_mode == "Quick range":
-        quick_choice = st.selectbox(
-            "Select range",
-            ["5d", "1mo", "3mo", "6mo", "YTD", "1y", "2y", "5y", "max"],
-            index=2,
-        )
-        start_date = None
-        end_date = None
-    else:
-        today = dt.date.today()
-        default_start = today - dt.timedelta(days=90)
-        start_date = st.date_input("Start date", value=default_start, max_value=today)
-        end_date = st.date_input("End date", value=today, max_value=today)
-        quick_choice = None
-
-    interval = st.selectbox(
-        "Bar interval",
-        ["1d", "1wk", "1mo"],
-        index=0,
-        help="How the volume is bucketed (daily, weekly, monthly).",
-    )
-
-    include_outliers = st.checkbox(
-        "Include outliers",
-        value=True,
-        help=(
-            "If unchecked, unusually extreme-volume bars are excluded before "
-            "computing the rising/falling averages."
-        ),
-    )
-    if not include_outliers:
-        outlier_sd = st.number_input(
-            "Outlier threshold (standard deviations)",
-            min_value=0.5,
-            max_value=5.0,
-            value=2.0,
-            step=0.5,
-            help=(
-                "A bar counts as an outlier if its volume is more than this "
-                "many standard deviations from the average."
-            ),
-        )
-    else:
-        outlier_sd = None
-
-    show_rising_line = st.checkbox(
-        "Show rising avg line",
-        value=False,
-    )
-
-    show_falling_line = st.checkbox(
-        "Show falling avg line",
-        value=False,
-    )
-
-    fetch_clicked = st.button("Get data", type="primary", use_container_width=True)
 
 # ---------------------------------------------------------------------------
 # Data fetching
@@ -129,6 +56,23 @@ def fetch_quote(ticker: str):
         "exchange": info.get("fullExchangeName") or info.get("exchange"),
     }
 
+@st.cache_data(ttl=120, show_spinner=False)
+def fetch_latest_minute(ticker: str, minute_key: str):
+    tk = yf.Ticker(ticker)
+    recent = tk.history(period="1d", interval="1m").tail(2)
+    if len(recent) < 2:
+        return None
+    recent = recent.reset_index()
+    time_col = "Datetime" if "Datetime" in recent.columns else recent.columns[0]
+    recent = recent.rename(columns={time_col: "Datetime"})
+    prev_vol, latest_vol = recent["Volume"].iloc[0], recent["Volume"].iloc[1]
+    pct = ((latest_vol - prev_vol) / prev_vol * 100) if prev_vol else 0
+    latest_t = recent["Datetime"].iloc[1]
+    end_t = latest_t + pd.Timedelta(minutes=1)
+    time_label = f"{latest_t.hour}:{latest_t.minute:02d}-{end_t.hour}:{end_t.minute:02d}"
+    return {"pct": pct, "time_label": time_label}
+
+
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_minute_volume(ticker: str) -> pd.DataFrame:
     tk = yf.Ticker(ticker)
@@ -152,6 +96,9 @@ def fetch_minute_volume(ticker: str) -> pd.DataFrame:
     )
     mdf["DateTimeLabel"] = mdf["Day"].astype(str) + " " + mdf["TimeLabel"]
     return mdf
+
+def current_minute_key() -> str:
+    return dt.datetime.now().strftime("%Y-%m-%d %H:%M")
 
 def mean_excluding_outliers(volumes: pd.Series, sd_threshold: float | None):
     if volumes.empty:
@@ -467,24 +414,9 @@ def render():
         "Spans the last 7 trading days, updated every minute."
     )
 
-    with st.spinner("Fetching minute-level data..."):
-        try:
-            mdf = fetch_minute_volume(ticker_input)
-        except Exception as e:
-            mdf = pd.DataFrame()
-            st.error(f"Couldn't fetch minute-level data for '{ticker_input}': {e}")
-
     if mdf.empty:
         st.warning("No minute-level data available for this ticker right now.")
     else:
-        trading_days = sorted(mdf["Day"].unique())
-        selected_day = st.selectbox(
-            "Select a trading day",
-            trading_days,
-            index=len(trading_days) - 1,
-            format_func=lambda d: d.strftime("%A, %b %d, %Y"),
-        )
-
         day_df = (
             mdf[mdf["Day"] == selected_day]
             .dropna(subset=["VolPctChange"])
@@ -494,11 +426,16 @@ def render():
         if day_df.empty:
             st.info("Not enough minutes in this day to compute a percent change yet.")
         else:
-            latest_pct = day_df["VolPctChange"].iloc[-1]
+            live = fetch_latest_minute(ticker_input, current_minute_key())
+            if live:
+                latest_pct = live["pct"]
+                latest_time_label = live["time_label"]
+            else:
+                latest_pct = day_df["VolPctChange"].iloc[-1]
+                latest_time_label = day_df["TimeLabel"].iloc[-1]
+
             latest_tri = "▲" if latest_pct > 0 else "▼" if latest_pct < 0 else None
             latest_col = "#2ada5c" if latest_pct > 0 else "#d1242f" if latest_pct < 0 else None
-
-            latest_time_label = day_df["TimeLabel"].iloc[-1]
 
             if latest_pct > 0:
                 badge_bg_m = "rgba(42,218,92,0.15)"
@@ -548,6 +485,98 @@ def render():
                     d_df = d_df.rename(columns={"DateTimeLabel": "Datetime"})
                     st.markdown(f"**{d.strftime('%A, %b %d, %Y')}**")
                     st.dataframe(d_df, use_container_width=True)
+
+# ---------------------------------------------------------------------------
+# Sidebar controls
+# ---------------------------------------------------------------------------
+with st.sidebar:
+    st.subheader("Volume Average")
+    ticker_input = st.text_input(
+        "Ticker symbol", value="AAPL", help="e.g. AAPL, MSFT, TSLA, NVDA"
+    ).strip().upper()
+
+    range_mode = st.radio(
+        "Time period",
+        ["Quick range", "Custom dates"],
+        horizontal=True,
+    )
+
+    if range_mode == "Quick range":
+        quick_choice = st.selectbox(
+            "Select range",
+            ["5d", "1mo", "3mo", "6mo", "YTD", "1y", "2y", "5y", "max"],
+            index=2,
+        )
+        start_date = None
+        end_date = None
+    else:
+        today = dt.date.today()
+        default_start = today - dt.timedelta(days=90)
+        start_date = st.date_input("Start date", value=default_start, max_value=today)
+        end_date = st.date_input("End date", value=today, max_value=today)
+        quick_choice = None
+
+    interval = st.selectbox(
+        "Bar interval",
+        ["1d", "1wk", "1mo"],
+        index=0,
+        help="How the volume is bucketed (daily, weekly, monthly).",
+    )
+
+    include_outliers = st.checkbox(
+        "Include outliers",
+        value=True,
+        help=(
+            "If unchecked, unusually extreme-volume bars are excluded before "
+            "computing the rising/falling averages."
+        ),
+    )
+    if not include_outliers:
+        outlier_sd = st.number_input(
+            "Outlier threshold (standard deviations)",
+            min_value=0.5,
+            max_value=5.0,
+            value=2.0,
+            step=0.5,
+            help=(
+                "A bar counts as an outlier if its volume is more than this "
+                "many standard deviations from the average."
+            ),
+        )
+    else:
+        outlier_sd = None
+
+    show_rising_line = st.checkbox(
+        "Show rising avg line",
+        value=False,
+    )
+
+    show_falling_line = st.checkbox(
+        "Show falling avg line",
+        value=False,
+    )
+    fetch_clicked = st.button("Get data", type="primary", use_container_width=True)
+
+    st.divider()
+
+    st.subheader("Volume % Change ")
+    try:
+        mdf = fetch_minute_volume(ticker_input) if ticker_input else pd.DataFrame()
+    except Exception:
+        mdf = pd.DataFrame()
+    if not mdf.empty:
+        trading_days = sorted(mdf["Day"].unique())
+        selected_day = st.date_input(
+            "Trading day",
+            value=trading_days[-1],
+            min_value=trading_days[0],
+            max_value=trading_days[-1],
+        )
+
+    else:
+        trading_days = []
+        selected_day = None
+
 
 
 render()
