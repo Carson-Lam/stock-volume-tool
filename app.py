@@ -24,7 +24,8 @@ st_autorefresh(interval=10_000, key="minute_data_refresh")
 
 st.set_page_config(page_title="Stock Volume Tracker", layout="wide")
 
-st.title("Stock Volume Averages")
+
+st.title("Stock Volume Average")
 st.caption(
     "Enter a ticker and a time period to see how many shares were traded "
     "over that time. Hover over the average volumes to see the top 2 highest-volume bars."
@@ -250,7 +251,7 @@ def render():
                     for d, v in hover_rows
                 )
                 dropdown_html = f"""
-                <div class="vol-tooltip" style="position:relative;display:inline-block;cursor:help;">
+                <div class="vol-tooltip" style="position:relative;display:inline;cursor:help;">
                     <span style="border-bottom:2px dotted #808495;">{value_str}</span>{triangle_html}
                     <div class="vol-tooltip-content" style="display:none;position:absolute;
                         top:100%;left:0;background:#262730;border:1px solid #444;
@@ -490,11 +491,13 @@ def render():
 # Sidebar controls
 # ---------------------------------------------------------------------------
 with st.sidebar:
-    st.subheader("Volume Average")
     ticker_input = st.text_input(
         "Ticker symbol", value="AAPL", help="e.g. AAPL, MSFT, TSLA, NVDA"
     ).strip().upper()
 
+    st.divider()
+
+    st.subheader("Volume Average")
     range_mode = st.radio(
         "Time period",
         ["Quick range", "Custom dates"],
