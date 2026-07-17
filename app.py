@@ -18,10 +18,13 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 import yfinance as yf
+from streamlit_autorefresh import st_autorefresh
+
+st_autorefresh(interval=60_000, key="minute_data_refresh") 
 
 st.set_page_config(page_title="Stock Volume Tracker", layout="wide")
 
-st.title("Stock Volume Tracker")
+st.title("Stock Volume Averages")
 st.caption(
     "Enter a ticker and a time period to see how many shares were traded "
     "over that time. Hover over the average volumes to see the top 2 highest-volume bars."
@@ -126,6 +129,29 @@ def fetch_quote(ticker: str):
         "exchange": info.get("fullExchangeName") or info.get("exchange"),
     }
 
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_minute_volume(ticker: str) -> pd.DataFrame:
+    tk = yf.Ticker(ticker)
+    mdf = tk.history(period="7d", interval="1m")
+    if mdf.empty:
+        return mdf
+    mdf = mdf.reset_index()
+    time_col = "Datetime" if "Datetime" in mdf.columns else mdf.columns[0]
+    mdf = mdf.rename(columns={time_col: "Datetime"})
+    mdf["Day"] = mdf["Datetime"].dt.date
+    mdf["PrevDatetime"] = mdf.groupby("Day")["Datetime"].shift(1)
+    mdf["VolPctChange"] = mdf.groupby("Day")["Volume"].pct_change() * 100
+
+    def fmt_time(t):
+        return f"{t.hour}:{t.minute:02d}"
+
+    mdf["TimeLabel"] = mdf.apply(
+        lambda r: f"{fmt_time(r['PrevDatetime'])}-{fmt_time(r['Datetime'])}"
+        if pd.notna(r["PrevDatetime"]) else fmt_time(r["Datetime"]),
+        axis=1,
+    )
+    mdf["DateTimeLabel"] = mdf["Day"].astype(str) + " " + mdf["TimeLabel"]
+    return mdf
 
 def mean_excluding_outliers(volumes: pd.Series, sd_threshold: float | None):
     if volumes.empty:
@@ -328,7 +354,7 @@ def render():
                 </span>
             </div>
             <div style='color:#808495;font-size:14px;'>
-                {state_label}: {latest_date.strftime('%b %d, %Y')} &middot; Data via Yahoo Finance
+                {state_label}: {latest_date.strftime('%b %d, %Y')} &middot; 
             </div>
         </div>
         """,
@@ -433,6 +459,95 @@ def render():
             file_name=f"{ticker_input}_volume.csv",
             mime="text/csv",
         )
+
+    st.divider()
+    st.title("Stock Volume % Change")
+    st.caption(
+        "How much trading volume rose or fell from one minute to the next. "
+        "Spans the last 7 trading days, updated every minute."
+    )
+
+    with st.spinner("Fetching minute-level data..."):
+        try:
+            mdf = fetch_minute_volume(ticker_input)
+        except Exception as e:
+            mdf = pd.DataFrame()
+            st.error(f"Couldn't fetch minute-level data for '{ticker_input}': {e}")
+
+    if mdf.empty:
+        st.warning("No minute-level data available for this ticker right now.")
+    else:
+        trading_days = sorted(mdf["Day"].unique())
+        selected_day = st.selectbox(
+            "Select a trading day",
+            trading_days,
+            index=len(trading_days) - 1,
+            format_func=lambda d: d.strftime("%A, %b %d, %Y"),
+        )
+
+        day_df = (
+            mdf[mdf["Day"] == selected_day]
+            .dropna(subset=["VolPctChange"])
+            .reset_index(drop=True)
+        )
+
+        if day_df.empty:
+            st.info("Not enough minutes in this day to compute a percent change yet.")
+        else:
+            latest_pct = day_df["VolPctChange"].iloc[-1]
+            latest_tri = "▲" if latest_pct > 0 else "▼" if latest_pct < 0 else None
+            latest_col = "#2ada5c" if latest_pct > 0 else "#d1242f" if latest_pct < 0 else None
+
+            latest_time_label = day_df["TimeLabel"].iloc[-1]
+
+            if latest_pct > 0:
+                badge_bg_m = "rgba(42,218,92,0.15)"
+            elif latest_pct < 0:
+                badge_bg_m = "rgba(209,36,47,0.15)"
+            else:
+                badge_bg_m = "rgba(128,132,149,0.15)"
+
+            st.markdown(
+                f"""
+                <div style='margin-bottom:15px;'>
+                    <div style='font-size:1.1rem;line-height:1.2;'>Most recent minute % change</div>
+                    <div style='display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;line-height:1.2;'>
+                        <span style='font-size:2.75rem;font-weight:700;'>{latest_time_label}</span>
+                        <span style='background:{badge_bg_m};color:{latest_col or "#808495"};padding:4px 12px;
+                            border-radius:0.5rem;font-weight:600;font-size:1rem;'>
+                            {latest_tri or ""} {abs(latest_pct):.2f}%
+                        </span>
+                    </div>
+                    <div style='color:#808495;font-size:14px;'>
+                        {state_label}: {latest_date.strftime('%b %d, %Y')} &middot; 
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            x_vals = day_df["Datetime"]
+            y_vals = day_df["VolPctChange"]
+
+            min_fig = go.Figure(
+                data=[go.Scatter(x=x_vals, y=y_vals, mode="lines", line=dict(color="#4C82F7"))],
+            )
+            min_fig.add_hline(y=0, line_dash="dot", line_color="#808495")
+            min_fig.update_layout(
+                title=f"{ticker_input} Minute Volume % Change ({selected_day.strftime('%b %d, %Y')})",
+                xaxis=dict(range=[x_vals.min(), x_vals.max()], tickformat="%H:%M", title="Time"),
+                yaxis=dict(title="% change vs. previous minute"),
+                height=450,
+                margin=dict(l=10, r=10, t=50, b=10),
+            )
+            st.plotly_chart(min_fig, use_container_width=True)
+
+            with st.expander("Show minute-by-minute data (all days)"):
+                for d in trading_days:
+                    d_df = mdf[mdf["Day"] == d][["DateTimeLabel", "Volume", "VolPctChange"]].copy()
+                    d_df = d_df.rename(columns={"DateTimeLabel": "Datetime"})
+                    st.markdown(f"**{d.strftime('%A, %b %d, %Y')}**")
+                    st.dataframe(d_df, use_container_width=True)
 
 
 render()
