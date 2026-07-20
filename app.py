@@ -119,25 +119,25 @@ def current_minute_key() -> str:
 
 def mean_excluding_outliers(volumes: pd.Series, sd_threshold: float | None):
     if volumes.empty:
-        return float("nan"), 0
+        return float("nan"), 0, pd.Series(True, index=volumes.index)
 
     if sd_threshold is None:
-        return volumes.mean(), 0
+        return volumes.mean(), 0, pd.Series(True, index=volumes.index)
 
     mean1 = volumes.mean()
     std1 = volumes.std()
 
     if std1 == 0 or pd.isna(std1):
-        return mean1, 0
+        return mean1, 0, pd.Series(True, index=volumes.index)
 
     z_scores = (volumes - mean1).abs() / std1
     keep_mask = z_scores <= sd_threshold
     filtered = volumes[keep_mask]
 
     if filtered.empty:
-        return mean1, 0
+        return mean1, 0, pd.Series(True, index=volumes.index)
 
-    return filtered.mean(), int((~keep_mask).sum())
+    return filtered.mean(), int((~keep_mask).sum()), keep_mask
 
 def normalize_exchange(raw_exchange: str | None) -> str:
     if not raw_exchange:
@@ -222,12 +222,14 @@ def render():
     rising_mask = df["Close"] > df["Open"]
     falling_mask = df["Close"] < df["Open"]
 
-    rising_avg, rising_excluded = mean_excluding_outliers(
+    rising_avg, rising_excluded, rising_keep = mean_excluding_outliers(
         df.loc[rising_mask, "Volume"], outlier_sd
     )
-    falling_avg, falling_excluded = mean_excluding_outliers(
+    falling_avg, falling_excluded, falling_keep = mean_excluding_outliers(
         df.loc[falling_mask, "Volume"], outlier_sd
     )
+    excluded_idx = rising_keep[~rising_keep].index.union(falling_keep[~falling_keep].index)
+    df_chart = df.drop(index=excluded_idx)
 
     rising_help = "Average volume on bars that closed above their own open (green bars)."
     if outlier_sd is not None:
@@ -367,21 +369,21 @@ def render():
     )
     
     x_labels = (
-        df[date_col].dt.strftime("%H:%M")
+        df_chart[date_col].dt.strftime("%H:%M")
         if interval == "5m"
-        else df[date_col].dt.strftime("%Y-%m-%d")
+        else df_chart[date_col].dt.strftime("%Y-%m-%d")
     )
 
     bar_colors = [
         "#229B44" if c > o else "#9C252D" if c < o else "#888888"
-        for c, o in zip(df["Close"], df["Open"])
+        for c, o in zip(df_chart["Close"], df_chart["Open"])
     ]
 
     fig = go.Figure()
     fig.add_trace(
         go.Bar(
             x=x_labels,
-            y=df["Volume"],
+            y=df_chart["Volume"],
             marker_color=bar_colors,
             name="Volume",
         )
