@@ -37,15 +37,21 @@ st.caption(
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_history(ticker: str, period: str | None, start, end, interval: str) -> pd.DataFrame:
     tk = yf.Ticker(ticker)
-    if period:
-        df = tk.history(period=period, interval=interval)
-    else:
-        df = tk.history(start=start, end=end, interval=interval)
+    try:
+        if period:
+            df = tk.history(period=period, interval=interval)
+        else:
+            df = tk.history(start=start, end=end, interval=interval)
+    except Exception:
+        return pd.DataFrame()
     return df
 
-@st.cache_data(ttl=30, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def fetch_quote(ticker: str):
-    info = yf.Ticker(ticker).info
+    try:
+        info = yf.Ticker(ticker).info
+    except Exception:
+        return None
     return {
         "price": info.get("currentPrice") or info.get("regularMarketPrice"),
         "change": info.get("regularMarketChange"),
@@ -60,7 +66,11 @@ def fetch_quote(ticker: str):
 @st.cache_data(ttl=120, show_spinner=False)
 def fetch_latest_minute(ticker: str, minute_key: str):
     tk = yf.Ticker(ticker)
-    recent = tk.history(period="1d", interval="1m").tail(2)
+    try:
+        recent = tk.history(period="1d", interval="1m")
+    except Exception:
+        return None
+    recent = recent[recent["Volume"] > 0].tail(2) 
     if len(recent) < 2:
         return None
     recent = recent.reset_index()
@@ -77,7 +87,13 @@ def fetch_latest_minute(ticker: str, minute_key: str):
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_minute_volume(ticker: str) -> pd.DataFrame:
     tk = yf.Ticker(ticker)
-    mdf = tk.history(period="7d", interval="1m")
+    try:
+        mdf = tk.history(period="7d", interval="1m")
+    except Exception:
+        return pd.DataFrame()
+    if mdf.empty:
+        return mdf
+    mdf = mdf[mdf["Volume"] > 0]
     if mdf.empty:
         return mdf
     mdf = mdf.reset_index()
@@ -162,6 +178,12 @@ def render():
         )
         return
 
+    if interval == "5m":
+        df = df[df["Volume"] > 0]
+        if df.empty:
+            st.warning(f"No intraday data available for '{ticker_input}' yet today.")
+            return
+
     df = df.reset_index()
     date_col = "Date" if "Date" in df.columns else df.columns[0]
 
@@ -226,8 +248,9 @@ def render():
     
     def extreme2(mask, ascending):
         subset = df.loc[mask, [date_col, "Volume"]].sort_values("Volume", ascending=ascending).head(2)
+        fmt = "%Y-%m-%d %H:%M" if interval == "5m" else "%Y-%m-%d"
         return [
-            (row[date_col].date().isoformat(), f"{int(row['Volume']):,}")
+            (row[date_col].strftime(fmt), f"{int(row['Volume']):,}")
             for _, row in subset.iterrows()
         ]
 
@@ -343,7 +366,11 @@ def render():
         "Average volume:", f"{avg_volume:,}"
     )
     
-    x_labels = df[date_col].dt.strftime("%Y-%m-%d")
+    x_labels = (
+        df[date_col].dt.strftime("%H:%M")
+        if interval == "5m"
+        else df[date_col].dt.strftime("%Y-%m-%d")
+    )
 
     bar_colors = [
         "#229B44" if c > o else "#9C252D" if c < o else "#888888"
@@ -380,6 +407,18 @@ def render():
             text="Falling average", showarrow=False, xanchor="left",
             font=dict(color="#9C252D", size=11),
         )
+
+    # trend_window = st.slider("Trend window (bars)", 2, 20, 5, key="volume_trend_window")
+    # df["Volume_Trend"] = df["Volume"].rolling(window=trend_window, min_periods=1).mean()
+    # fig.add_trace(
+    #     go.Scatter(
+    #         x=x_labels,
+    #         y=df["Volume_Trend"],
+    #         mode="lines",
+    #         line=dict(color="#FFA500", width=3),
+    #         name=f"{trend_window}-bar trend",
+    #     )
+    # )
 
     fig.update_layout(
         title=f"{ticker_input} Trading Volume",
@@ -491,6 +530,10 @@ def render():
 # Sidebar controls
 # ---------------------------------------------------------------------------
 with st.sidebar:
+    st.title("Settings")
+    
+    st.write("")
+
     ticker_input = st.text_input(
         "Ticker symbol", value="AAPL", help="e.g. AAPL, MSFT, TSLA, NVDA"
     ).strip().upper()
@@ -507,8 +550,8 @@ with st.sidebar:
     if range_mode == "Quick range":
         quick_choice = st.selectbox(
             "Select range",
-            ["5d", "1mo", "3mo", "6mo", "YTD", "1y", "2y", "5y", "max"],
-            index=2,
+            ["1d", "5d", "1mo", "3mo", "6mo", "YTD", "1y", "2y", "5y", "max"],
+            index=3,
         )
         start_date = None
         end_date = None
@@ -521,8 +564,8 @@ with st.sidebar:
 
     interval = st.selectbox(
         "Bar interval",
-        ["1d", "1wk", "1mo"],
-        index=0,
+        ["5m", "1d", "1wk", "1mo"],
+        index=1,
         help="How the volume is bucketed (daily, weekly, monthly).",
     )
 
