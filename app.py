@@ -368,8 +368,9 @@ def render():
         "Average volume:", f"{avg_volume:,}"
     )
     
+    spans_multiple_days = df_chart[date_col].dt.date.nunique() > 1
     x_labels = (
-        df_chart[date_col].dt.strftime("%H:%M")
+        df_chart[date_col].dt.strftime("%m-%d %H:%M" if spans_multiple_days else "%H:%M")
         if interval == "5m"
         else df_chart[date_col].dt.strftime("%Y-%m-%d")
     )
@@ -396,14 +397,26 @@ def render():
         font=dict(color="#FFFFFF", size=11),
     )
     if show_rising_line and pd.notna(rising_avg):
-        fig.add_hline(y=rising_avg, line_dash="dash", line_color="#2ada5c", line_width=3)
+        fig.add_hline(
+            y=rising_avg,
+            line_dash="dash",
+            line_color="#2ada5c",
+            line_width=3,
+            layer="above"
+        )
         fig.add_annotation(
             xref="paper", x=1.01, yref="y", y=rising_avg,
             text="Rising average", showarrow=False, xanchor="left",
             font=dict(color="#229B44", size=11),
         )
     if show_falling_line and pd.notna(falling_avg):
-        fig.add_hline(y=falling_avg, line_dash="dash", line_color="#d1242f", line_width=3)
+        fig.add_hline(
+            y=falling_avg,
+            line_dash="dash",
+            line_color="#d1242f",
+            line_width=3,
+            layer="above"
+        )
         fig.add_annotation(
             xref="paper", x=1.01, yref="y", y=falling_avg,
             text="Falling average", showarrow=False, xanchor="left",
@@ -549,12 +562,15 @@ with st.sidebar:
         horizontal=True,
     )
 
+    interval = st.selectbox(
+        "Bar interval",
+        ["5m", "1d", "1wk", "1mo"],
+        index=1, 
+        help="How the volume is bucketed (5-minute, daily, weekly, monthly).",
+    )
     if range_mode == "Quick range":
-        quick_choice = st.selectbox(
-            "Select range",
-            ["1d", "5d", "1mo", "3mo", "6mo", "YTD", "1y", "2y", "5y", "max"],
-            index=3,
-        )
+        range_options = ["1d"] if interval == "5m" else ["5d", "1mo", "3mo", "6mo", "YTD", "1y", "2y", "5y", "max"]
+        quick_choice = st.selectbox("Select range", range_options, index=0 if interval == "5m" else 1)
         start_date = None
         end_date = None
     else:
@@ -563,13 +579,6 @@ with st.sidebar:
         start_date = st.date_input("Start date", value=default_start, max_value=today)
         end_date = st.date_input("End date", value=today, max_value=today)
         quick_choice = None
-
-    interval = st.selectbox(
-        "Bar interval",
-        ["5m", "1d", "1wk", "1mo"],
-        index=1,
-        help="How the volume is bucketed (daily, weekly, monthly).",
-    )
 
     include_outliers = st.checkbox(
         "Include outliers",
