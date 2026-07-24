@@ -312,18 +312,23 @@ def render():
     else:
         latest_triangle, latest_color = None, None      
     
-    def extreme2(mask, ascending):
-        subset = df.loc[mask, [date_col, "Volume"]].sort_values("Volume", ascending=ascending).head(2)
+    def extreme_both(mask, n = 2):
+        subset = df.loc[mask, [date_col, "Volume"]]
         fmt = "%Y-%m-%d %H:%M" if interval == "5m" else "%Y-%m-%d"
-        return [
-            (row[date_col].strftime(fmt), f"{int(row['Volume']):,}")
-            for _, row in subset.iterrows()
-        ]
+        def fmt_rows(rows):
+            return [
+                (row[date_col].strftime(fmt), f"{int(row['Volume']):,}")
+                for _, row in rows.iterrows()
+            ]
 
-    rising_top2 = extreme2(rising_mask, ascending=False)
-    falling_top2 = extreme2(falling_mask, ascending=True)
+        top = subset.sort_values("Volume", ascending=False).head(n)
+        bottom = subset.sort_values("Volume", ascending=True).head(n)
+        return fmt_rows(top), fmt_rows(bottom)
 
-    def render_metric(col, label, value_str, triangle=None, color=None, tooltip=None, hover_rows=None, hover_title="Top 2 volumes"):
+    rising_top2, rising_bottom2 = extreme_both(rising_mask)
+    falling_top2, falling_bottom2 = extreme_both(falling_mask)
+    
+    def render_metric(col, label, value_str, triangle=None, color=None, tooltip=None, hover_sections=None):
         with col:
             st.metric(label, value="\u00A0", help=tooltip) 
 
@@ -332,32 +337,29 @@ def render():
                 if triangle else ""
             )
 
-            if hover_rows:
-                rows_html = "".join(
-                    f"<div style='display:flex;justify-content:space-between;gap:14px;"
-                    f"padding:2px 0;'><span style='color:#aaa;'>{d}</span>"
-                    f"<span style='font-weight:600;'>{v}</span></div>"
-                    for d, v in hover_rows
+            if hover_sections:
+                sections_html = ""
+                for section_label, rows in hover_sections:
+                    rows_html = "".join(
+                        f"<div style='display:flex;justify-content:space-between;gap:14px;"
+                        f"padding:2px 0;'><span style='color:#aaa;'>{d}</span>"
+                        f"<span style='font-weight:600;'>{v}</span></div>"
+                        for d, v in rows
+                    )
+                    sections_html += (
+                        f"<div style='color:#ddd;font-size:0.75rem;margin-bottom:4px;margin-top:8px;'>"
+                        f"{section_label}</div>{rows_html}"
+                    )
+                dropdown_html = (
+                    f"<div class='vol-tooltip' style='position:relative;display:inline;cursor:help;'>"
+                    f"<span style='border-bottom:2px dotted #808495;'>{value_str}</span>{triangle_html}"
+                    f"<div class='vol-tooltip-content' style='display:none;position:absolute;"
+                    f"top:100%;left:0;background:#262730;border:1px solid #444;"
+                    f"border-radius:8px;padding:10px 14px;font-size:0.85rem;"
+                    f"white-space:nowrap;z-index:999;margin-top:6px;"
+                    f"box-shadow:0 2px 8px rgba(0,0,0,0.4);'>{sections_html}</div></div>"
+                    f"<style>.vol-tooltip:hover .vol-tooltip-content {{ display:block !important; }}</style>"
                 )
-                dropdown_html = f"""
-                <div class="vol-tooltip" style="position:relative;display:inline;cursor:help;">
-                    <span style="border-bottom:2px dotted #808495;">{value_str}</span>{triangle_html}
-                    <div class="vol-tooltip-content" style="display:none;position:absolute;
-                        top:100%;left:0;background:#262730;border:1px solid #444;
-                        border-radius:8px;padding:10px 14px;font-size:0.85rem;
-                        white-space:nowrap;z-index:999;margin-top:6px;
-                        box-shadow:0 2px 8px rgba(0,0,0,0.4);">
-                        <div style='color:#ddd;font-size:0.75rem;margin-bottom:4px;'>
-                            {hover_title}
-                        </div>
-                        {rows_html}
-                    </div>
-                </div>
-
-                <style>
-                .vol-tooltip:hover .vol-tooltip-content {{ display:block !important; }}
-                </style>
-                """
             else:
                 dropdown_html = f"{value_str}{triangle_html}"
 
@@ -414,8 +416,7 @@ def render():
         triangle="▲",
         color="#2ada5c",
         tooltip=rising_help,
-        hover_rows=rising_top2,
-        hover_title="Top 2 volumes",
+        hover_sections=[("Highest volumes", rising_top2), ("Lowest volumes", rising_bottom2)],
     )
     render_metric(
         c3,
@@ -424,8 +425,7 @@ def render():
         triangle="▼",
         color="#d1242f",
         tooltip=falling_help,
-        hover_rows=falling_top2,
-        hover_title="Lowest 2 volumes",
+        hover_sections=[("Highest volumes", falling_top2), ("Lowest volumes", falling_bottom2)],
     )
     render_metric(
         c4,
@@ -529,7 +529,7 @@ def render():
     st.divider()
 
     st.title("Technical Filter Check")
-    st.caption(f"Checking {ticker_input} against 3 technical filters using daily and monthly data.")
+    st.caption(f"Checking {ticker_input} against 3 technical filters using daily and monthly data. Hover over the filter title to see the formulas used.")
 
     filter_df = fetch_history(ticker_input, "6mo", None, None, "1d")
     if filter_df is None or filter_df.empty or len(filter_df) < 70:
@@ -577,17 +577,17 @@ def render():
         fc1, fc2, fc3 = st.columns(3)
         render_filter_card(
             fc1, "Filter 1: RSI9 > 50 | VR > 100", f1_pass,
-            f"RSI9: {latest_rsi:.1f} &middot; VR: {latest_vr:.1f}" if pd.notna(latest_rsi) and pd.notna(latest_vr) else "Insufficient data",
+            f"RSI9: {latest_rsi:.1f} | VR: {latest_vr:.1f}" if pd.notna(latest_rsi) and pd.notna(latest_vr) else "Insufficient data",
             formula_html=rsi_formula,
         )
         render_filter_card(
             fc2, "Filter 2: RSI9 > 50 | MACD DIF > DEA", f2_pass,
-            f"RSI9: {latest_rsi:.1f} &middot; DIF: {latest_dif:.2f} &middot; DEA: {latest_dea:.2f}" if pd.notna(latest_rsi) and pd.notna(latest_dif) else "Insufficient data",
+            f"RSI9: {latest_rsi:.1f} | DIF: {latest_dif:.2f} | DEA: {latest_dea:.2f}" if pd.notna(latest_rsi) and pd.notna(latest_dif) else "Insufficient data",
             formula_html=macd_formula,
         )
         render_filter_card(
             fc3, "Filter 3: RSI9 > 50 | Vol > 3mo up-avg", f3_pass,
-            f"RSI9: {latest_rsi:.1f} &middot; Vol: {latest_vol:,.0f} vs 3mo up-avg {latest_vol_avg_3mo_up:,.0f}" if pd.notna(latest_rsi) and pd.notna(latest_vol_avg_3mo_up) else "Insufficient data",
+            f"RSI9: {latest_rsi:.1f} | Vol: {latest_vol:,.0f} | 3mo up-avg {latest_vol_avg_3mo_up:,.0f}" if pd.notna(latest_rsi) and pd.notna(latest_vol_avg_3mo_up) else "Insufficient data",
         )
         
     st.divider()
