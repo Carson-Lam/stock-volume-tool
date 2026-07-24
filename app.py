@@ -183,20 +183,18 @@ def render_filter_card(col, title, passed, detail_text):
         st.markdown(
             f"""
             <div style='
-                border:1px solid {color}55;
-                background:{bg};
+                border:1px solid {color}55; 
+                background:{bg}; 
                 border-radius:0.5rem;
                 padding:14px 16px;
-                height:100%;
-                display:flex;
-                flex-direction:column;
-                box-sizing:border-box;
-            '>
+                border-left:2px solid {color};'
+                '
+            >
                 <div style='display:flex; align-items:center; gap:8px; margin-bottom:6px;'>
                     <span style='font-weight:600; font-size:0.95rem;'>{title}</span>
                 </div>
                 <div style='color:{color}; font-size:0.8rem; font-weight:600; margin-bottom:4px;'>{status_text}</div>
-                <div style='color:#aaa; font-size:0.8rem; line-height:1.4;'>{detail_text}</div>
+                <div style='color:#aaa; font-size:0.8rem; line-height:1.4; max-height:45px;'>{detail_text}</div>
             </div>
             """,
             unsafe_allow_html=True,
