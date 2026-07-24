@@ -175,26 +175,39 @@ def normalize_exchange(raw_exchange: str | None) -> str:
         return "NYSE"
     return raw_exchange
 
-def render_filter_card(col, title, passed, detail_text):
+def render_filter_card(col, title, passed, detail_text, formula_html=None):
     with col:
         color = "#2ada5c" if passed else "#d1242f"
         bg = "rgba(42,218,92,0.08)" if passed else "rgba(209,36,47,0.08)"
         status_text = "Met" if passed else "Not met"
+
+        if formula_html:
+            title_html = f"""
+            <span class="filter-tooltip" style="position:relative;cursor:help;
+                border-bottom:2px dotted #808495;">
+                {title}
+                <div class="filter-tooltip-content" style="display:none;position:absolute;
+                    top:100%;left:0;background:#262730;border:1px solid #444;
+                    border-radius:8px;padding:12px 14px;font-size:0.8rem;line-height:1.6;
+                    white-space:nowrap;z-index:999;margin-top:6px;font-family:monospace;
+                    box-shadow:0 2px 8px rgba(0,0,0,0.4);">
+                    {formula_html}
+                </div>
+            </span>
+            <style>.filter-tooltip:hover .filter-tooltip-content {{ display:block !important; }}</style>
+            """
+        else:
+            title_html = title
+
         st.markdown(
             f"""
-            <div style='
-                border:1px solid {color}55; 
-                background:{bg}; 
-                border-radius:0.5rem;
-                padding:14px 16px;
-                border-left:2px solid {color};'
-                '
-            >
+            <div style='border:1px solid {color}55; background:{bg}; border-radius:0.5rem;
+                padding:14px 16px; border-left:2px solid {color};'>
                 <div style='display:flex; align-items:center; gap:8px; margin-bottom:6px;'>
-                    <span style='font-weight:600; font-size:0.95rem;'>{title}</span>
+                    <span style='font-weight:600; font-size:0.95rem;'>{title_html}</span>
                 </div>
                 <div style='color:{color}; font-size:0.8rem; font-weight:600; margin-bottom:4px;'>{status_text}</div>
-                <div style='color:#aaa; font-size:0.8rem; line-height:1.4; max-height:45px;'>{detail_text}</div>
+                <div style='color:#aaa; font-size:0.8rem; line-height:1.4;'>{detail_text}</div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -516,7 +529,7 @@ def render():
     st.divider()
 
     st.title("Technical Filter Check")
-    st.caption(f"Checking {ticker_input} against 3 technical filters using daily data.")
+    st.caption(f"Checking {ticker_input} against 3 technical filters using daily and monthly data.")
 
     filter_df = fetch_history(ticker_input, "6mo", None, None, "1d")
     if filter_df is None or filter_df.empty or len(filter_df) < 70:
@@ -549,20 +562,34 @@ def render():
 
         st.markdown(f"### {total_passed} / 3 filters met")
         
+        rsi_formula = (
+            "<div style='color:#ddd;font-weight:600;margin-bottom:4px;'>RSI(9)</div>"
+            "<div>RS = Avg Gain(9) / Avg Loss(9)</div>"
+            "<div>RSI = 100 &minus; (100 / (1 + RS))</div>"
+            "<div>Avg Gain(9) = (prior avg &times; 8 + today) / 9</div>"
+        )
+        macd_formula = (
+            "<div style='color:#ddd;font-weight:600;margin-bottom:4px;'>MACD</div>"
+            "<div>DIF = EMA(12) &minus; EMA(26)</div>"
+            "<div>DEA = EMA(9) of DIF</div>"
+        )
+
         fc1, fc2, fc3 = st.columns(3)
         render_filter_card(
             fc1, "Filter 1: RSI9 > 50 | VR > 100", f1_pass,
-            f"RSI9: {latest_rsi:.1f} | VR: {latest_vr:.1f}" if pd.notna(latest_rsi) and pd.notna(latest_vr) else "Insufficient data"
+            f"RSI9: {latest_rsi:.1f} &middot; VR: {latest_vr:.1f}" if pd.notna(latest_rsi) and pd.notna(latest_vr) else "Insufficient data",
+            formula_html=rsi_formula,
         )
         render_filter_card(
             fc2, "Filter 2: RSI9 > 50 | MACD DIF > DEA", f2_pass,
-            f"RSI9: {latest_rsi:.1f} | DIF: {latest_dif:.2f} | DEA: {latest_dea:.2f}" if pd.notna(latest_rsi) and pd.notna(latest_dif) else "Insufficient data"
+            f"RSI9: {latest_rsi:.1f} &middot; DIF: {latest_dif:.2f} &middot; DEA: {latest_dea:.2f}" if pd.notna(latest_rsi) and pd.notna(latest_dif) else "Insufficient data",
+            formula_html=macd_formula,
         )
         render_filter_card(
             fc3, "Filter 3: RSI9 > 50 | Vol > 3mo up-avg", f3_pass,
-            f"RSI9: {latest_rsi:.1f} | Vol: {latest_vol:,.0f} | 3mo up-avg {latest_vol_avg_3mo_up:,.0f}" if pd.notna(latest_rsi) and pd.notna(latest_vol_avg_3mo_up) else "Insufficient data"
+            f"RSI9: {latest_rsi:.1f} &middot; Vol: {latest_vol:,.0f} vs 3mo up-avg {latest_vol_avg_3mo_up:,.0f}" if pd.notna(latest_rsi) and pd.notna(latest_vol_avg_3mo_up) else "Insufficient data",
         )
-
+        
     st.divider()
     st.title("Stock Volume % Change")
     st.caption(
