@@ -139,6 +139,32 @@ def mean_excluding_outliers(volumes: pd.Series, sd_threshold: float | None):
 
     return filtered.mean(), int((~keep_mask).sum()), keep_mask
 
+def compute_rsi(close: pd.Series, period: int = 9) -> pd.Series:
+    delta = close.diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+    avg_gain = gain.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
+    rs = avg_gain / avg_loss
+    return 100 - (100 / (1 + rs))
+
+def compute_vr(close: pd.Series, volume: pd.Series, period: int = 26) -> pd.Series:
+    change = close.diff()
+    up_vol = volume.where(change > 0, 0)
+    down_vol = volume.where(change < 0, 0)
+    flat_vol = volume.where(change == 0, 0)
+    up_sum = up_vol.rolling(period).sum()
+    down_sum = down_vol.rolling(period).sum()
+    flat_sum = flat_vol.rolling(period).sum()
+    return (up_sum + flat_sum / 2) / (down_sum + flat_sum / 2) * 100
+
+def compute_macd(close: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9):
+    ema_fast = close.ewm(span=fast, adjust=False).mean()
+    ema_slow = close.ewm(span=slow, adjust=False).mean()
+    dif = ema_fast - ema_slow
+    dea = dif.ewm(span=signal, adjust=False).mean()
+    return dif, dea
+
 def normalize_exchange(raw_exchange: str | None) -> str:
     if not raw_exchange:
         return ""
@@ -148,6 +174,33 @@ def normalize_exchange(raw_exchange: str | None) -> str:
     if "NYSE" in raw or raw == "NYQ":
         return "NYSE"
     return raw_exchange
+
+def render_filter_card(col, title, passed, detail_text):
+    with col:
+        color = "#2ada5c" if passed else "#d1242f"
+        bg = "rgba(42,218,92,0.08)" if passed else "rgba(209,36,47,0.08)"
+        status_text = "Met" if passed else "Not met"
+        st.markdown(
+            f"""
+            <div style='
+                border:1px solid {color}55;
+                background:{bg};
+                border-radius:0.5rem;
+                padding:14px 16px;
+                height:100%;
+                display:flex;
+                flex-direction:column;
+                box-sizing:border-box;
+            '>
+                <div style='display:flex; align-items:center; gap:8px; margin-bottom:6px;'>
+                    <span style='font-weight:600; font-size:0.95rem;'>{title}</span>
+                </div>
+                <div style='color:{color}; font-size:0.8rem; font-weight:600; margin-bottom:4px;'>{status_text}</div>
+                <div style='color:#aaa; font-size:0.8rem; line-height:1.4;'>{detail_text}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
 def render():
     if not ticker_input:
@@ -463,6 +516,56 @@ def render():
         )
 
     st.divider()
+
+    st.title("Technical Filter Check")
+    st.caption(f"Checking {ticker_input} against 3 technical filters using daily data.")
+
+    filter_df = fetch_history(ticker_input, "6mo", None, None, "1d")
+    if filter_df is None or filter_df.empty or len(filter_df) < 70:
+        st.warning("Not enough daily history to compute these indicators (need ~70 trading days minimum).")
+    else:
+        filter_df = filter_df.reset_index()
+        rsi = compute_rsi(filter_df["Close"], period=9)
+        vr = compute_vr(filter_df["Close"], filter_df["Volume"], period=26)
+        dif, dea = compute_macd(filter_df["Close"])
+        is_up_day = filter_df["Close"].diff() > 0
+        vol_on_up_days = filter_df["Volume"].where(is_up_day)
+        vol_avg_3mo_up = vol_on_up_days.rolling(63, min_periods=1).mean() 
+
+        latest_rsi = rsi.iloc[-1]
+        latest_vr = vr.iloc[-1]
+        latest_dif, latest_dea = dif.iloc[-1], dea.iloc[-1]
+        latest_vol = filter_df["Volume"].iloc[-1]
+        latest_vol_avg_3mo_up = vol_avg_3mo_up.iloc[-1]
+        rsi_above_50 = pd.notna(latest_rsi) and latest_rsi > 50
+
+        f1_pass = rsi_above_50 and pd.notna(latest_vr) and latest_vr > 100
+        f2_pass = rsi_above_50 and pd.notna(latest_dif) and pd.notna(latest_dea) and latest_dif > latest_dea
+        f3_pass = (
+            rsi_above_50
+            and pd.notna(latest_vol_avg_3mo_up)
+            and latest_vol > latest_vol_avg_3mo_up
+        )
+
+        total_passed = sum([f1_pass, f2_pass, f3_pass])
+
+        st.markdown(f"### {total_passed} / 3 filters met")
+        
+        fc1, fc2, fc3 = st.columns(3)
+        render_filter_card(
+            fc1, "Filter 1: RSI9 > 50 | VR > 100", f1_pass,
+            f"RSI9: {latest_rsi:.1f} | VR: {latest_vr:.1f}" if pd.notna(latest_rsi) and pd.notna(latest_vr) else "Insufficient data"
+        )
+        render_filter_card(
+            fc2, "Filter 2: RSI9 > 50 | MACD DIF > DEA", f2_pass,
+            f"RSI9: {latest_rsi:.1f} | DIF: {latest_dif:.2f} | DEA: {latest_dea:.2f}" if pd.notna(latest_rsi) and pd.notna(latest_dif) else "Insufficient data"
+        )
+        render_filter_card(
+            fc3, "Filter 3: RSI9 > 50 | Vol > 3mo up-avg", f3_pass,
+            f"RSI9: {latest_rsi:.1f} | Vol: {latest_vol:,.0f} | 3mo up-avg {latest_vol_avg_3mo_up:,.0f}" if pd.notna(latest_rsi) and pd.notna(latest_vol_avg_3mo_up) else "Insufficient data"
+        )
+
+    st.divider()
     st.title("Stock Volume % Change")
     st.caption(
         "How much trading volume rose or fell from one minute to the next. "
@@ -540,6 +643,9 @@ def render():
                     d_df = d_df.rename(columns={"DateTimeLabel": "Datetime"})
                     st.markdown(f"**{d.strftime('%A, %b %d, %Y')}**")
                     st.dataframe(d_df, use_container_width=True)
+            
+
+
 
 # ---------------------------------------------------------------------------
 # Sidebar controls
